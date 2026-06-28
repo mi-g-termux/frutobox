@@ -506,12 +506,12 @@ function setLocal<T>(key: string, value: T): void {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const store = {
-  products:      getLocal<Product[]>('qf_products',   DEFAULT_PRODUCTS),
-  categories:    getLocal<Category[]>('qf_categories', DEFAULT_CATEGORIES),
+  products:      getLocal<Product[]>('qf_products',   []),
+  categories:    getLocal<Category[]>('qf_categories', []),
   orders:        getLocal<Order[]>('qf_orders',        []),
-  coupons:       getLocal<Coupon[]>('qf_coupons',      DEFAULT_COUPONS),
+  coupons:       getLocal<Coupon[]>('qf_coupons',      []),
   newsletter:    getLocal<NewsletterSubscriber[]>('qf_newsletter', []),
-  reviews:       getLocal<Review[]>('qf_reviews',      DEFAULT_REVIEWS),
+  reviews:       getLocal<Review[]>('qf_reviews',      []),
   siteSettings:  { ...DEFAULT_SITE_SETTINGS, ...getLocal<Partial<SiteSettings>>('qf_siteSettings', {}) } as SiteSettings,
   smtpSettings:  getLocal<SMTPSettings>('qf_smtpSettings',     DEFAULT_SMTP_SETTINGS),
   paymentSettings: getLocal<PaymentSettings>('qf_paymentSettings', DEFAULT_PAYMENT_SETTINGS),

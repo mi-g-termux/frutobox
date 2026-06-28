@@ -626,6 +626,21 @@ const [brandPayFastLogo, setBrandPayFastLogo] = useState((paymentSettings as any
     // Firebase/Supabase connection alone must never bypass the password check.
     const storedPass = liveSettings?.password || liveSettings?.passwordHash || adminSettings.password || adminSettings.passwordHash || '';
    const storedUser = liveSettings?.username || adminSettings.username || '';
+
+   // If we couldn't load credentials from ANY source, show a helpful error
+   // instead of silently failing with 'Invalid credentials'.
+   if (!storedUser && !storedPass) {
+     const engine = getActiveEngine();
+     let hint = '';
+     if (engine === 'supabase') {
+       hint = ' Make sure SUPABASE_URL and SUPABASE_ANON_KEY are set on your server, or run the installer from this browser first.';
+     } else if (engine === 'firebase') {
+       hint = ' Make sure FIREBASE_* environment variables are set on your server, or run the installer from this browser first.';
+     }
+     setLoginError('Could not load admin credentials from the database.' + hint);
+     setLoginLoading(false);
+     return;
+   }
    const newHash = await hashPassword(inputPass);
    const oldHash = simpleHash(inputPass);
    const passMatches =

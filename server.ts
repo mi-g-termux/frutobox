@@ -1178,7 +1178,10 @@ async function startServer() {
     // Remove empty optional fields from response so client gets a clean object
     (Object.keys(cfg) as Array<keyof typeof cfg>).forEach(k => { if (!cfg[k]) delete (cfg as any)[k]; });
     if (missing.length > 0) {
-      return res.status(404).json({ error: 'Firebase not configured', missing });
+      // Return 200 with empty object instead of 404 to avoid noisy console errors.
+      // The client (firebase.ts) already handles empty/invalid responses gracefully
+      // by falling back to localStorage or VITE env vars.
+      return res.json({});
     }
     res.json(cfg);
   });
@@ -1256,10 +1259,10 @@ async function startServer() {
     const projectUrl = readEnv(['VITE_SUPABASE_URL', 'SUPABASE_URL']);
     const anonKey    = readEnv(['VITE_SUPABASE_ANON_KEY', 'VITE_SUPABASE_PUBLISHABLE_KEY', 'SUPABASE_ANON_KEY', 'SUPABASE_PUBLISHABLE_KEY']);
     if (!projectUrl || !anonKey) {
-      return res.status(404).json({
-        error: 'Supabase not configured',
-        missing: [!projectUrl && 'SUPABASE_URL', !anonKey && 'SUPABASE_ANON_KEY or SUPABASE_PUBLISHABLE_KEY'].filter(Boolean),
-      });
+      // Return 200 with empty object instead of 404 to avoid noisy console errors.
+      // The client (supabase.ts) already handles empty/invalid responses gracefully
+      // by falling back to localStorage or VITE env vars.
+      return res.json({});
     }
     res.setHeader('Cache-Control', 'no-store');
     res.json({ projectUrl, anonKey });
