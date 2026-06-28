@@ -61,6 +61,7 @@ import {
 import {
   getSupabaseClient,
   getIsSupabaseConfigured,
+  supabaseBootPromise,
 } from './supabase';
 import {
   collection,
@@ -124,6 +125,28 @@ const getDb   = () => _firebaseDb;
 /** Firebase is only allowed when Supabase is NOT the active engine. */
 const fbOk    = () => getActiveEngine() !== 'supabase' && getIsFirebaseConfigured() && !!getDb();
 const sbOk    = () => getIsSupabaseConfigured() && !!getSupabaseClient();
+
+async function waitForActiveBackendBoot(): Promise<DatabaseEngine> {
+  const engine = getActiveEngine();
+  if (engine === 'supabase') {
+    await supabaseBootPromise;
+  } else if (engine === 'firebase') {
+    await firebaseBootPromise;
+  }
+  return getActiveEngine();
+}
+
+function requireSupabaseReady(action: string): void {
+  if (!sbOk()) {
+    throw new Error(`[Supabase] ${action} failed: Supabase is the active backend, but the client is not ready. Check Supabase URL/key and table setup.`);
+  }
+}
+
+function requireFirebaseReady(action: string): void {
+  if (!fbOk()) {
+    throw new Error(`[Firebase] ${action} failed: Firebase is the active backend, but Firestore is not ready. Check Firebase config and rules.`);
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  ENGINE REGISTRY — localStorage keys
@@ -506,16 +529,25 @@ const store = {
  * Returns array of merged { id, ...data } objects or null on error.
  */
 async function sbGetAll<T extends { id: string }>(table: string): Promise<T[] | null> {
-  if (!sbOk()) return null;
+  if (!sbOk()) {
+    if (getActiveEngine() === 'supabase') requireSupabaseReady(`read ${table}`);
+    return null;
+  }
   try {
     const sb = getSupabaseClient();
     const { data, error } = await sb.from(table).select('id, data');
-    if (error) { console.warn(`[Supabase] ${table} select error:`, error); return null; }
+    if (error) {
+      const message = `[Supabase] ${table} select failed: ${error.message || 'Unknown error'}${error.code ? ` (${error.code})` : ''}`;
+      if (getActiveEngine() === 'supabase') throw new Error(message);
+      console.warn(message, error);
+      return null;
+    }
     return (data || []).map((row: { id: string; data: Record<string, unknown> }) => ({
       id: row.id,
       ...row.data,
     })) as T[];
   } catch (err) {
+    if (getActiveEngine() === 'supabase') throw err;
     console.warn(`[Supabase] ${table} getAll threw:`, err);
     return null;
   }
@@ -526,14 +558,18 @@ async function sbGetAll<T extends { id: string }>(table: string): Promise<T[] | 
  * Schema: (id TEXT PRIMARY KEY, data JSONB NOT NULL)
  */
 async function sbUpsert<T extends { id: string }>(table: string, item: T): Promise<void> {
-  if (!sbOk()) return;
+  if (!sbOk()) {
+    if (getActiveEngine() === 'supabase') requireSupabaseReady(`save ${table}`);
+    return;
+  }
   try {
     const sb = getSupabaseClient();
     const { id, ...rest } = item;
     const { error } = await sb.from(table).upsert({ id, data: rest }, { onConflict: 'id' });
-    if (error) console.warn(`[Supabase] ${table} upsert error:`, error);
+    if (error) throw new Error(`[Supabase] ${table} upsert failed: ${error.message || 'Unknown error'}${error.code ? ` (${error.code})` : ''}`);
   } catch (err) {
     console.warn(`[Supabase] ${table} upsert threw:`, err);
+    throw err;
   }
 }
 
@@ -541,13 +577,17 @@ async function sbUpsert<T extends { id: string }>(table: string, item: T): Promi
  * Delete a row from a Supabase table by id.
  */
 async function sbDelete(table: string, id: string): Promise<void> {
-  if (!sbOk()) return;
+  if (!sbOk()) {
+    if (getActiveEngine() === 'supabase') requireSupabaseReady(`delete from ${table}`);
+    return;
+  }
   try {
     const sb = getSupabaseClient();
     const { error } = await sb.from(table).delete().eq('id', id);
-    if (error) console.warn(`[Supabase] ${table} delete error:`, error);
+    if (error) throw new Error(`[Supabase] ${table} delete failed: ${error.message || 'Unknown error'}${error.code ? ` (${error.code})` : ''}`);
   } catch (err) {
     console.warn(`[Supabase] ${table} delete threw:`, err);
+    throw err;
   }
 }
 
@@ -556,20 +596,35 @@ async function sbDelete(table: string, id: string): Promise<void> {
  * Schema: (key TEXT PRIMARY KEY, value JSONB NOT NULL)
  */
 async function sbGetSetting<T>(key: string): Promise<T | null> {
-  if (!sbOk()) return null;
+  if (!sbOk()) {
+    if (getActiveEngine() === 'supabase') requireSupabaseReady(`read settings/${key}`);
+    return null;
+  }
   try {
     const sb = getSupabaseClient();
     const { data, error } = await sb.from('settings').select('value').eq('key', key).maybeSingle();
-    if (error || !data) return null;
+    if (error) {
+      const message = `[Supabase] settings "${key}" read failed: ${error.message || 'Unknown error'}${error.code ? ` (${error.code})` : ''}`;
+      if (getActiveEngine() === 'supabase') throw new Error(message);
+      console.warn(message, error);
+      return null;
+    }
+    if (!data) return null;
     return data.value as T;
-  } catch { return null; }
+  } catch (err) {
+    if (getActiveEngine() === 'supabase') throw err;
+    return null;
+  }
 }
 
 /**
  * Write a singleton settings record to the `settings` table.
  */
 async function sbSetSetting<T>(key: string, value: T): Promise<void> {
-  if (!sbOk()) return;
+  if (!sbOk()) {
+    if (getActiveEngine() === 'supabase') requireSupabaseReady(`save settings/${key}`);
+    return;
+  }
   const sb = getSupabaseClient();
   const { error } = await sb.from('settings').upsert({ key, value }, { onConflict: 'key' });
   if (error) throw new Error(`[Supabase] settings upsert "${key}" failed: ${error.message}`);
@@ -586,13 +641,12 @@ export const dbService = {
   // ── PRODUCTS ───────────────────────────────────────────────────────────────
 
   async getProducts(): Promise<Product[]> {
-    // Wait for Firebase to finish booting before making decisions
-    await firebaseBootPromise;
+    const engine = await waitForActiveBackendBoot();
     // Supabase path
-    if (sbOk()) {
+    if (engine === 'supabase') {
       const rows = await sbGetAll<Product>('products');
       if (rows !== null) {
-        store.products = rows.length > 0 ? rows : store.products;
+        store.products = rows;
         setLocal('qf_products', store.products);
         return store.products;
       }
@@ -606,7 +660,10 @@ export const dbService = {
         store.products = list;
         setLocal('qf_products', list);
         return list;
-      } catch (err) { console.warn('[db] Firebase getProducts fallback:', err); }
+      } catch (err) {
+        if (engine === 'firebase') throw err;
+        console.warn('[db] Firebase getProducts fallback:', err);
+      }
     }
     // Also try Firestore without auth check (permissive rules allow reads without auth)
     // firebaseBootPromise has resolved, so getIsFirebaseConfigured() is accurate
@@ -634,27 +691,35 @@ export const dbService = {
     store.products = store.products.filter((p, i, a) => a.findIndex(x => x.id === p.id) === i);
     setLocal('qf_products', store.products);
     // Persist to active cloud backend
-    await firebaseBootPromise;
-    if (sbOk()) { await sbUpsert('products', product); return; }
-    if (fbOk()) { try { await setDoc(doc(getDb()!, 'products', product.id), product); } catch (e) { console.warn('[db] Firestore saveProduct failed (local save ok):', e); } }
+    const engine = await waitForActiveBackendBoot();
+    if (engine === 'supabase') { await sbUpsert('products', product); return; }
+    if (engine === 'firebase') {
+      requireFirebaseReady('save products');
+      await setDoc(doc(getDb()!, 'products', product.id), product);
+      return;
+    }
   },
 
   async deleteProduct(productId: string): Promise<void> {
-    await firebaseBootPromise;
+    const engine = await waitForActiveBackendBoot();
     store.products = store.products.filter(p => p.id !== productId);
     setLocal('qf_products', store.products);
-    if (sbOk()) { await sbDelete('products', productId); return; }
-    if (fbOk()) { try { await deleteDoc(doc(getDb()!, 'products', productId)); } catch (e) { console.warn('[db] Firestore deleteProduct failed (local delete ok):', e); } }
+    if (engine === 'supabase') { await sbDelete('products', productId); return; }
+    if (engine === 'firebase') {
+      requireFirebaseReady('delete products');
+      await deleteDoc(doc(getDb()!, 'products', productId));
+      return;
+    }
   },
 
   // ── CATEGORIES ─────────────────────────────────────────────────────────────
 
   async getCategories(): Promise<Category[]> {
-    await firebaseBootPromise;
-    if (sbOk()) {
+    const engine = await waitForActiveBackendBoot();
+    if (engine === 'supabase') {
       const rows = await sbGetAll<Category>('categories');
       if (rows !== null) {
-        store.categories = rows.length > 0 ? rows : store.categories;
+        store.categories = rows;
         setLocal('qf_categories', store.categories);
         return store.categories;
       }
@@ -667,7 +732,10 @@ export const dbService = {
         store.categories = list;
         setLocal('qf_categories', list);
         return list;
-      } catch (err) { console.warn('[db] Firebase getCategories fallback:', err); }
+      } catch (err) {
+        if (engine === 'firebase') throw err;
+        console.warn('[db] Firebase getCategories fallback:', err);
+      }
     }
     // Also try Firestore without auth check (permissive rules allow reads without auth)
     if (getActiveEngine() !== 'supabase' && getIsFirebaseConfigured() && !!getDb()) {
@@ -691,26 +759,34 @@ export const dbService = {
     if (idx > -1) store.categories[idx] = category; else store.categories.push(category);
     store.categories = store.categories.filter((c, i, a) => a.findIndex(x => x.id === c.id) === i);
     setLocal('qf_categories', store.categories);
-    await firebaseBootPromise;
-    if (sbOk()) { await sbUpsert('categories', category); return; }
-    if (fbOk()) { try { await setDoc(doc(getDb()!, 'categories', category.id), category); } catch (e) { console.warn('[db] Firestore saveCategory failed (local save ok):', e); } }
+    const engine = await waitForActiveBackendBoot();
+    if (engine === 'supabase') { await sbUpsert('categories', category); return; }
+    if (engine === 'firebase') {
+      requireFirebaseReady('save categories');
+      await setDoc(doc(getDb()!, 'categories', category.id), category);
+      return;
+    }
   },
 
   async deleteCategory(categoryId: string): Promise<void> {
-    await firebaseBootPromise;
+    const engine = await waitForActiveBackendBoot();
     store.categories = store.categories.filter(c => c.id !== categoryId);
     setLocal('qf_categories', store.categories);
-    if (sbOk()) { await sbDelete('categories', categoryId); return; }
-    if (fbOk()) { try { await deleteDoc(doc(getDb()!, 'categories', categoryId)); } catch (e) { console.warn('[db] Firestore deleteCategory failed (local delete ok):', e); } }
+    if (engine === 'supabase') { await sbDelete('categories', categoryId); return; }
+    if (engine === 'firebase') {
+      requireFirebaseReady('delete categories');
+      await deleteDoc(doc(getDb()!, 'categories', categoryId));
+      return;
+    }
   },
 
   // ── ORDERS ─────────────────────────────────────────────────────────────────
 
   async getOrders(): Promise<Order[]> {
-    await firebaseBootPromise;
-    if (sbOk()) {
+    const engine = await waitForActiveBackendBoot();
+    if (engine === 'supabase') {
       const rows = await sbGetAll<Order>('orders');
-      if (rows !== null && rows.length > 0) {
+      if (rows !== null) {
         rows.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
         store.orders = rows;
         setLocal('qf_orders', rows);
@@ -723,8 +799,13 @@ export const dbService = {
         const list: Order[] = [];
         snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Order));
         list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        if (list.length > 0) { store.orders = list; setLocal('qf_orders', list); return list; }
-      } catch (err) { console.warn('[db] Firebase getOrders fallback:', err); }
+        store.orders = list;
+        setLocal('qf_orders', list);
+        return list;
+      } catch (err) {
+        if (engine === 'firebase') throw err;
+        console.warn('[db] Firebase getOrders fallback:', err);
+      }
     }
     return [...store.orders].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   },
@@ -733,9 +814,13 @@ export const dbService = {
     const idx = store.orders.findIndex(o => o.id === order.id);
     if (idx > -1) store.orders[idx] = order; else store.orders.push(order);
     setLocal('qf_orders', store.orders);
-    await firebaseBootPromise;
-    if (sbOk()) { await sbUpsert('orders', order); return; }
-    if (fbOk()) { try { await setDoc(doc(getDb()!, 'orders', order.id), order); } catch (e) { console.warn('[db] Firestore saveOrder failed (local save ok):', e); } }
+    const engine = await waitForActiveBackendBoot();
+    if (engine === 'supabase') { await sbUpsert('orders', order); return; }
+    if (engine === 'firebase') {
+      requireFirebaseReady('save orders');
+      await setDoc(doc(getDb()!, 'orders', order.id), order);
+      return;
+    }
   },
 
   async updateOrderStatus(orderId: string, status: Order['orderStatus']): Promise<void> {
@@ -744,9 +829,13 @@ export const dbService = {
       store.orders[idx].orderStatus = status;
       if (status === 'Delivered') store.orders[idx].paymentStatus = 'Paid';
       setLocal('qf_orders', store.orders);
-      await firebaseBootPromise;
-      if (sbOk()) { await sbUpsert('orders', store.orders[idx]); return; }
-      if (fbOk()) { try { await setDoc(doc(getDb()!, 'orders', orderId), store.orders[idx]); } catch (e) { console.warn('[db] Firestore updateOrderStatus failed (local save ok):', e); } }
+      const engine = await waitForActiveBackendBoot();
+      if (engine === 'supabase') { await sbUpsert('orders', store.orders[idx]); return; }
+      if (engine === 'firebase') {
+        requireFirebaseReady('update order status');
+        await setDoc(doc(getDb()!, 'orders', orderId), store.orders[idx]);
+        return;
+      }
     }
   },
 
@@ -755,35 +844,48 @@ export const dbService = {
     if (idx > -1) {
       store.orders[idx].paymentStatus = status;
       setLocal('qf_orders', store.orders);
-      await firebaseBootPromise;
-      if (sbOk()) { await sbUpsert('orders', store.orders[idx]); return; }
-      if (fbOk()) { try { await setDoc(doc(getDb()!, 'orders', orderId), store.orders[idx]); } catch (e) { console.warn('[db] Firestore updateOrderPaymentStatus failed (local save ok):', e); } }
+      const engine = await waitForActiveBackendBoot();
+      if (engine === 'supabase') { await sbUpsert('orders', store.orders[idx]); return; }
+      if (engine === 'firebase') {
+        requireFirebaseReady('update order payment status');
+        await setDoc(doc(getDb()!, 'orders', orderId), store.orders[idx]);
+        return;
+      }
     }
   },
 
   async deleteOrder(orderId: string): Promise<void> {
-    await firebaseBootPromise;
+    const engine = await waitForActiveBackendBoot();
     store.orders = store.orders.filter(o => o.id !== orderId);
     setLocal('qf_orders', store.orders);
-    if (sbOk()) { await sbDelete('orders', orderId); return; }
-    if (fbOk()) { try { await deleteDoc(doc(getDb()!, 'orders', orderId)); } catch (e) { console.warn('[db] Firestore deleteOrder failed (local delete ok):', e); } }
+    if (engine === 'supabase') { await sbDelete('orders', orderId); return; }
+    if (engine === 'firebase') {
+      requireFirebaseReady('delete orders');
+      await deleteDoc(doc(getDb()!, 'orders', orderId));
+      return;
+    }
   },
 
   // ── COUPONS ────────────────────────────────────────────────────────────────
 
   async getCoupons(): Promise<Coupon[]> {
-    await firebaseBootPromise;
-    if (sbOk()) {
+    const engine = await waitForActiveBackendBoot();
+    if (engine === 'supabase') {
       const rows = await sbGetAll<Coupon>('coupons');
-      if (rows !== null && rows.length > 0) { store.coupons = rows; setLocal('qf_coupons', rows); return rows; }
+      if (rows !== null) { store.coupons = rows; setLocal('qf_coupons', rows); return rows; }
     }
     if (fbOk()) {
       try {
         const snap = await getDocs(collection(getDb()!, 'coupons'));
         const list: Coupon[] = [];
         snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Coupon));
-        if (list.length > 0) { store.coupons = list; setLocal('qf_coupons', list); return list; }
-      } catch (err) { console.warn('[db] Firebase getCoupons fallback:', err); }
+        store.coupons = list;
+        setLocal('qf_coupons', list);
+        return list;
+      } catch (err) {
+        if (engine === 'firebase') throw err;
+        console.warn('[db] Firebase getCoupons fallback:', err);
+      }
     }
     // Also try Firestore without auth check (permissive rules allow reads without auth)
     if (getActiveEngine() !== 'supabase' && getIsFirebaseConfigured() && !!getDb()) {
@@ -801,83 +903,112 @@ export const dbService = {
     const idx = store.coupons.findIndex(c => c.id === coupon.id);
     if (idx > -1) store.coupons[idx] = coupon; else store.coupons.push(coupon);
     setLocal('qf_coupons', store.coupons);
-    await firebaseBootPromise;
-    if (sbOk()) { await sbUpsert('coupons', coupon); return; }
-    if (fbOk()) { try { await setDoc(doc(getDb()!, 'coupons', coupon.id), coupon); } catch (e) { console.warn('[db] Firestore saveCoupon failed (local save ok):', e); } }
+    const engine = await waitForActiveBackendBoot();
+    if (engine === 'supabase') { await sbUpsert('coupons', coupon); return; }
+    if (engine === 'firebase') {
+      requireFirebaseReady('save coupons');
+      await setDoc(doc(getDb()!, 'coupons', coupon.id), coupon);
+      return;
+    }
   },
 
   async deleteCoupon(couponId: string): Promise<void> {
     store.coupons = store.coupons.filter(c => c.id !== couponId);
     setLocal('qf_coupons', store.coupons);
-    await firebaseBootPromise;
-    if (sbOk()) { await sbDelete('coupons', couponId); return; }
-    if (fbOk()) { try { await deleteDoc(doc(getDb()!, 'coupons', couponId)); } catch (e) { console.warn('[db] Firestore deleteCoupon failed (local delete ok):', e); } }
+    const engine = await waitForActiveBackendBoot();
+    if (engine === 'supabase') { await sbDelete('coupons', couponId); return; }
+    if (engine === 'firebase') {
+      requireFirebaseReady('delete coupons');
+      await deleteDoc(doc(getDb()!, 'coupons', couponId));
+      return;
+    }
   },
 
   // ── NEWSLETTER ─────────────────────────────────────────────────────────────
 
   async getNewsletterSubscribers(): Promise<NewsletterSubscriber[]> {
-    await firebaseBootPromise;
-    if (sbOk()) {
+    const engine = await waitForActiveBackendBoot();
+    if (engine === 'supabase') {
       const rows = await sbGetAll<NewsletterSubscriber>('newsletter');
-      if (rows !== null && rows.length > 0) { store.newsletter = rows; setLocal('qf_newsletter', rows); return rows; }
+      if (rows !== null) { store.newsletter = rows; setLocal('qf_newsletter', rows); return rows; }
     }
     if (fbOk()) {
       try {
         const snap = await getDocs(collection(getDb()!, 'newsletter'));
         const list: NewsletterSubscriber[] = [];
         snap.forEach((d) => list.push({ id: d.id, ...d.data() } as NewsletterSubscriber));
-        if (list.length > 0) { store.newsletter = list; setLocal('qf_newsletter', list); return list; }
-      } catch (err) { console.warn('[db] Firebase getNewsletter fallback:', err); }
+        store.newsletter = list;
+        setLocal('qf_newsletter', list);
+        return list;
+      } catch (err) {
+        if (engine === 'firebase') throw err;
+        console.warn('[db] Firebase getNewsletter fallback:', err);
+      }
     }
     return store.newsletter;
   },
 
   async subscribeNewsletter(email: string): Promise<boolean> {
-    await firebaseBootPromise;
+    const engine = await waitForActiveBackendBoot();
     const cleaned = email.trim().toLowerCase();
     if (!cleaned) return false;
     if (store.newsletter.some(s => s.email.toLowerCase() === cleaned)) return false;
     const sub: NewsletterSubscriber = { id: 'sub_' + Math.random().toString(36).substr(2, 9), email: cleaned, subscribedAt: new Date().toISOString() };
     store.newsletter.push(sub);
     setLocal('qf_newsletter', store.newsletter);
-    if (sbOk()) { await sbUpsert('newsletter', sub); return true; }
-    if (fbOk()) { try { await setDoc(doc(getDb()!, 'newsletter', sub.id), sub); } catch (e) { console.warn('[db] Firebase newsletter write failed (subscriber saved locally):', e); } }
+    if (engine === 'supabase') { await sbUpsert('newsletter', sub); return true; }
+    if (engine === 'firebase') {
+      requireFirebaseReady('save newsletter subscriber');
+      await setDoc(doc(getDb()!, 'newsletter', sub.id), sub);
+    }
     return true;
   },
 
   async saveNewsletterSubscriber(subscriber: NewsletterSubscriber): Promise<void> {
-    await firebaseBootPromise;
+    const engine = await waitForActiveBackendBoot();
     const idx = store.newsletter.findIndex(s => s.id === subscriber.id);
     if (idx > -1) store.newsletter[idx] = subscriber; else store.newsletter.push(subscriber);
     setLocal('qf_newsletter', store.newsletter);
-    if (sbOk()) { await sbUpsert('newsletter', subscriber); return; }
-    if (fbOk()) { try { await setDoc(doc(getDb()!, 'newsletter', subscriber.id), subscriber); } catch (e) { console.warn('[db] Firestore saveNewsletterSubscriber failed (local save ok):', e); } }
+    if (engine === 'supabase') { await sbUpsert('newsletter', subscriber); return; }
+    if (engine === 'firebase') {
+      requireFirebaseReady('save newsletter subscriber');
+      await setDoc(doc(getDb()!, 'newsletter', subscriber.id), subscriber);
+      return;
+    }
   },
 
   async deleteSubscriber(id: string): Promise<void> {
-    await firebaseBootPromise;
+    const engine = await waitForActiveBackendBoot();
     store.newsletter = store.newsletter.filter(s => s.id !== id);
     setLocal('qf_newsletter', store.newsletter);
-    if (sbOk()) { await sbDelete('newsletter', id); return; }
-    if (fbOk()) { try { await deleteDoc(doc(getDb()!, 'newsletter', id)); } catch (e) { console.warn('[db] Firestore deleteSubscriber failed (local delete ok):', e); } }
+    if (engine === 'supabase') { await sbDelete('newsletter', id); return; }
+    if (engine === 'firebase') {
+      requireFirebaseReady('delete newsletter subscriber');
+      await deleteDoc(doc(getDb()!, 'newsletter', id));
+      return;
+    }
   },
 
   // ── REVIEWS ────────────────────────────────────────────────────────────────
 
   async getReviews(): Promise<Review[]> {
-    await firebaseBootPromise;
-    if (sbOk()) {
+    const engine = await waitForActiveBackendBoot();
+    if (engine === 'supabase') {
       const rows = await sbGetAll<Review>('reviews');
-      if (rows !== null && rows.length > 0) { store.reviews = rows; setLocal('qf_reviews', rows); return rows; }
+      if (rows !== null) { store.reviews = rows; setLocal('qf_reviews', rows); return rows; }
     }
     if (fbOk()) {
       try {
         const snap = await getDocs(collection(getDb()!, 'reviews'));
         const list: Review[] = [];
         snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Review));
-        if (list.length > 0) { store.reviews = list; setLocal('qf_reviews', list); return list; }
-      } catch (err) { console.warn('[db] Firebase getReviews fallback:', err); }
+        store.reviews = list;
+        setLocal('qf_reviews', list);
+        return list;
+      } catch (err) {
+        if (engine === 'firebase') throw err;
+        console.warn('[db] Firebase getReviews fallback:', err);
+      }
     }
     // Also try Firestore without auth check (permissive rules allow reads without auth)
     if (getActiveEngine() !== 'supabase' && getIsFirebaseConfigured() && !!getDb()) {
@@ -892,7 +1023,7 @@ export const dbService = {
   },
 
   async addReview(productId: string, name: string, rating: number, comment: string): Promise<void> {
-    await firebaseBootPromise;
+    const engine = await waitForActiveBackendBoot();
     const rev: Review = { id: 'rev_' + Math.random().toString(36).substr(2, 9), productId, reviewerName: name || 'Anonymous Guest', rating: rating || 5, comment: comment || '', isApproved: true, createdAt: new Date().toISOString() };
     store.reviews.push(rev);
     setLocal('qf_reviews', store.reviews);
@@ -904,43 +1035,59 @@ export const dbService = {
       store.products[pIdx].rating = Number((pRevs.reduce((s, r) => s + r.rating, 0) / Math.max(1, pRevs.length)).toFixed(1));
       this.saveProduct(store.products[pIdx]);
     }
-    if (sbOk()) { await sbUpsert('reviews', rev); return; }
-    if (fbOk()) { try { await setDoc(doc(getDb()!, 'reviews', rev.id), rev); } catch (e) { console.warn('[db] Firestore addReview failed (local save ok):', e); } }
+    if (engine === 'supabase') { await sbUpsert('reviews', rev); return; }
+    if (engine === 'firebase') {
+      requireFirebaseReady('save reviews');
+      await setDoc(doc(getDb()!, 'reviews', rev.id), rev);
+      return;
+    }
   },
 
   async saveReview(review: Review): Promise<void> {
-    await firebaseBootPromise;
+    const engine = await waitForActiveBackendBoot();
     const idx = store.reviews.findIndex(r => r.id === review.id);
     if (idx > -1) store.reviews[idx] = review; else store.reviews.push(review);
     setLocal('qf_reviews', store.reviews);
-    if (sbOk()) { await sbUpsert('reviews', review); return; }
-    if (fbOk()) { try { await setDoc(doc(getDb()!, 'reviews', review.id), review); } catch (e) { console.warn('[db] Firestore saveReview failed (local save ok):', e); } }
+    if (engine === 'supabase') { await sbUpsert('reviews', review); return; }
+    if (engine === 'firebase') {
+      requireFirebaseReady('save reviews');
+      await setDoc(doc(getDb()!, 'reviews', review.id), review);
+      return;
+    }
   },
 
   async approveReview(reviewId: string, isApproved: boolean): Promise<void> {
-    await firebaseBootPromise;
+    const engine = await waitForActiveBackendBoot();
     const idx = store.reviews.findIndex(r => r.id === reviewId);
     if (idx > -1) {
       store.reviews[idx].isApproved = isApproved;
       setLocal('qf_reviews', store.reviews);
-      if (sbOk()) { await sbUpsert('reviews', store.reviews[idx]); return; }
-      if (fbOk()) { try { await setDoc(doc(getDb()!, 'reviews', reviewId), store.reviews[idx]); } catch (e) { console.warn('[db] Firestore approveReview failed (local save ok):', e); } }
+      if (engine === 'supabase') { await sbUpsert('reviews', store.reviews[idx]); return; }
+      if (engine === 'firebase') {
+        requireFirebaseReady('update reviews');
+        await setDoc(doc(getDb()!, 'reviews', reviewId), store.reviews[idx]);
+        return;
+      }
     }
   },
 
   async deleteReview(reviewId: string): Promise<void> {
-    await firebaseBootPromise;
+    const engine = await waitForActiveBackendBoot();
     store.reviews = store.reviews.filter(r => r.id !== reviewId);
     setLocal('qf_reviews', store.reviews);
-    if (sbOk()) { await sbDelete('reviews', reviewId); return; }
-    if (fbOk()) { try { await deleteDoc(doc(getDb()!, 'reviews', reviewId)); } catch (e) { console.warn('[db] Firestore deleteReview failed (local delete ok):', e); } }
+    if (engine === 'supabase') { await sbDelete('reviews', reviewId); return; }
+    if (engine === 'firebase') {
+      requireFirebaseReady('delete reviews');
+      await deleteDoc(doc(getDb()!, 'reviews', reviewId));
+      return;
+    }
   },
 
   // ── SITE SETTINGS ──────────────────────────────────────────────────────────
 
   async getSiteSettings(): Promise<SiteSettings> {
-    await firebaseBootPromise;
-    if (sbOk()) {
+    const engine = await waitForActiveBackendBoot();
+    if (engine === 'supabase') {
       const val = await sbGetSetting<SiteSettings>('siteSettings');
       if (val) { const merged = { ...DEFAULT_SITE_SETTINGS, ...val }; store.siteSettings = merged; setLocal('qf_siteSettings', merged); return merged; }
     }
@@ -950,7 +1097,10 @@ export const dbService = {
         if (snap.exists()) { const s = { ...DEFAULT_SITE_SETTINGS, ...snap.data() } as SiteSettings; store.siteSettings = s; setLocal('qf_siteSettings', s); return s; }
         await setDoc(doc(getDb()!, 'settings', 'siteSettings'), store.siteSettings);
         return store.siteSettings;
-      } catch (err) { console.warn('[db] Firebase getSiteSettings fallback:', err); }
+      } catch (err) {
+        if (engine === 'firebase') throw err;
+        console.warn('[db] Firebase getSiteSettings fallback:', err);
+      }
     }
     // Also try Firestore without auth check (permissive rules allow reads without auth)
     if (getActiveEngine() !== 'supabase' && getIsFirebaseConfigured() && !!getDb()) {
@@ -968,20 +1118,24 @@ export const dbService = {
   },
 
   async saveSiteSettings(settings: SiteSettings): Promise<void> {
-    await firebaseBootPromise;
+    const engine = await waitForActiveBackendBoot();
     const merged = { ...DEFAULT_SITE_SETTINGS, ...settings };
     store.siteSettings = merged;
     setLocal('qf_siteSettings', merged);
-    if (sbOk()) { await sbSetSetting('siteSettings', settings); return; }
-    if (fbOk()) { try { await setDoc(doc(getDb()!, 'settings', 'siteSettings'), settings); } catch (e) { console.warn('[db] Firestore saveSiteSettings failed (local save ok):', e); } }
+    if (engine === 'supabase') { await sbSetSetting('siteSettings', settings); return; }
+    if (engine === 'firebase') {
+      requireFirebaseReady('save site settings');
+      await setDoc(doc(getDb()!, 'settings', 'siteSettings'), settings);
+      return;
+    }
   },
 
   // ── SMTP SETTINGS ──────────────────────────────────────────────────────────
 
   async getSMTPSettings(): Promise<SMTPSettings> {
-    await firebaseBootPromise;
-    if (sbOk()) { const v = await sbGetSetting<SMTPSettings>('smtpSettings'); if (v) { store.smtpSettings = v; setLocal('qf_smtpSettings', v); return v; } }
-    if (fbOk()) { try { const snap = await getDoc(doc(getDb()!, 'settings', 'smtpSettings')); if (snap.exists()) { const v = snap.data() as SMTPSettings; store.smtpSettings = v; setLocal('qf_smtpSettings', v); return v; } } catch (err) { console.warn('[db] Firebase getSMTP fallback:', err); } }
+    const engine = await waitForActiveBackendBoot();
+    if (engine === 'supabase') { const v = await sbGetSetting<SMTPSettings>('smtpSettings'); if (v) { store.smtpSettings = v; setLocal('qf_smtpSettings', v); return v; } }
+    if (fbOk()) { try { const snap = await getDoc(doc(getDb()!, 'settings', 'smtpSettings')); if (snap.exists()) { const v = snap.data() as SMTPSettings; store.smtpSettings = v; setLocal('qf_smtpSettings', v); return v; } } catch (err) { if (engine === 'firebase') throw err; console.warn('[db] Firebase getSMTP fallback:', err); } }
     // Also try Firestore without auth check (permissive rules allow reads without auth)
     if (getActiveEngine() !== 'supabase' && getIsFirebaseConfigured() && !!getDb()) {
       try {
@@ -998,19 +1152,23 @@ export const dbService = {
   },
 
   async saveSMTPSettings(settings: SMTPSettings): Promise<void> {
-    await firebaseBootPromise;
+    const engine = await waitForActiveBackendBoot();
     store.smtpSettings = settings;
     setLocal('qf_smtpSettings', settings);
-    if (sbOk()) { await sbSetSetting('smtpSettings', settings); return; }
-    if (fbOk()) { try { await setDoc(doc(getDb()!, 'settings', 'smtpSettings'), settings); } catch (e) { console.warn('[db] Firestore saveSMTPSettings failed (local save ok):', e); } }
+    if (engine === 'supabase') { await sbSetSetting('smtpSettings', settings); return; }
+    if (engine === 'firebase') {
+      requireFirebaseReady('save SMTP settings');
+      await setDoc(doc(getDb()!, 'settings', 'smtpSettings'), settings);
+      return;
+    }
   },
 
   // ── PAYMENT SETTINGS ───────────────────────────────────────────────────────
 
   async getPaymentSettings(): Promise<PaymentSettings> {
-    await firebaseBootPromise;
-    if (sbOk()) { const v = await sbGetSetting<PaymentSettings>('paymentSettings'); if (v) { store.paymentSettings = v; setLocal('qf_paymentSettings', v); return v; } }
-    if (fbOk()) { try { const snap = await getDoc(doc(getDb()!, 'settings', 'paymentSettings')); if (snap.exists()) { const v = snap.data() as PaymentSettings; store.paymentSettings = v; setLocal('qf_paymentSettings', v); return v; } } catch (err) { console.warn('[db] Firebase getPayment fallback:', err); } }
+    const engine = await waitForActiveBackendBoot();
+    if (engine === 'supabase') { const v = await sbGetSetting<PaymentSettings>('paymentSettings'); if (v) { store.paymentSettings = v; setLocal('qf_paymentSettings', v); return v; } }
+    if (fbOk()) { try { const snap = await getDoc(doc(getDb()!, 'settings', 'paymentSettings')); if (snap.exists()) { const v = snap.data() as PaymentSettings; store.paymentSettings = v; setLocal('qf_paymentSettings', v); return v; } } catch (err) { if (engine === 'firebase') throw err; console.warn('[db] Firebase getPayment fallback:', err); } }
     // Also try Firestore without auth check (permissive rules allow reads without auth)
     if (getActiveEngine() !== 'supabase' && getIsFirebaseConfigured() && !!getDb()) {
       try {
@@ -1027,19 +1185,23 @@ export const dbService = {
   },
 
   async savePaymentSettings(settings: PaymentSettings): Promise<void> {
-    await firebaseBootPromise;
+    const engine = await waitForActiveBackendBoot();
     store.paymentSettings = settings;
     setLocal('qf_paymentSettings', settings);
-    if (sbOk()) { await sbSetSetting('paymentSettings', settings); return; }
-    if (fbOk()) { try { await setDoc(doc(getDb()!, 'settings', 'paymentSettings'), settings); } catch (e) { console.warn('[db] Firestore savePaymentSettings failed (local save ok):', e); } }
+    if (engine === 'supabase') { await sbSetSetting('paymentSettings', settings); return; }
+    if (engine === 'firebase') {
+      requireFirebaseReady('save payment settings');
+      await setDoc(doc(getDb()!, 'settings', 'paymentSettings'), settings);
+      return;
+    }
   },
 
   // ── ADMIN SETTINGS ─────────────────────────────────────────────────────────
 
   async getAdminSettings(): Promise<AdminCredentials> {
-    await firebaseBootPromise;
-    if (sbOk()) { const v = await sbGetSetting<AdminCredentials>('adminSettings'); if (v) { store.adminSettings = v; setLocal('qf_adminSettings', v); return v; } }
-    if (fbOk()) { try { const snap = await getDoc(doc(getDb()!, 'settings', 'adminSettings')); if (snap.exists()) { const v = snap.data() as AdminCredentials; store.adminSettings = v; setLocal('qf_adminSettings', v); return v; } } catch (err) { console.warn('[db] Firebase getAdmin fallback:', err); } }
+    const engine = await waitForActiveBackendBoot();
+    if (engine === 'supabase') { const v = await sbGetSetting<AdminCredentials>('adminSettings'); if (v) { store.adminSettings = v; setLocal('qf_adminSettings', v); return v; } }
+    if (fbOk()) { try { const snap = await getDoc(doc(getDb()!, 'settings', 'adminSettings')); if (snap.exists()) { const v = snap.data() as AdminCredentials; store.adminSettings = v; setLocal('qf_adminSettings', v); return v; } } catch (err) { if (engine === 'firebase') throw err; console.warn('[db] Firebase getAdmin fallback:', err); } }
     // Also try Firestore without auth check (permissive rules allow reads without auth)
     if (getActiveEngine() !== 'supabase' && getIsFirebaseConfigured() && !!getDb()) {
       try {
@@ -1058,19 +1220,23 @@ export const dbService = {
   },
 
   async saveAdminSettings(settings: AdminCredentials): Promise<void> {
-    await firebaseBootPromise;
+    const engine = await waitForActiveBackendBoot();
     store.adminSettings = settings;
     setLocal('qf_adminSettings', settings);
-    if (sbOk()) { await sbSetSetting('adminSettings', settings); return; }
-    if (fbOk()) { await setDoc(doc(getDb()!, 'settings', 'adminSettings'), settings); }
+    if (engine === 'supabase') { await sbSetSetting('adminSettings', settings); return; }
+    if (engine === 'firebase') {
+      requireFirebaseReady('save admin settings');
+      await setDoc(doc(getDb()!, 'settings', 'adminSettings'), settings);
+      return;
+    }
   },
 
   // ── SUPPORT SETTINGS ───────────────────────────────────────────────────────
 
   async getSupportSettings(): Promise<SupportSettings> {
-    await firebaseBootPromise;
-    if (sbOk()) { const v = await sbGetSetting<SupportSettings>('supportSettings'); if (v) { store.supportSettings = v; setLocal('qf_supportSettings', v); return v; } }
-    if (fbOk()) { try { const snap = await getDoc(doc(getDb()!, 'settings', 'supportSettings')); if (snap.exists()) { const v = snap.data() as SupportSettings; store.supportSettings = v; setLocal('qf_supportSettings', v); return v; } } catch (err) { console.warn('[db] Firebase getSupport fallback:', err); } }
+    const engine = await waitForActiveBackendBoot();
+    if (engine === 'supabase') { const v = await sbGetSetting<SupportSettings>('supportSettings'); if (v) { store.supportSettings = v; setLocal('qf_supportSettings', v); return v; } }
+    if (fbOk()) { try { const snap = await getDoc(doc(getDb()!, 'settings', 'supportSettings')); if (snap.exists()) { const v = snap.data() as SupportSettings; store.supportSettings = v; setLocal('qf_supportSettings', v); return v; } } catch (err) { if (engine === 'firebase') throw err; console.warn('[db] Firebase getSupport fallback:', err); } }
     // Also try Firestore without auth check (permissive rules allow reads without auth)
     if (getActiveEngine() !== 'supabase' && getIsFirebaseConfigured() && !!getDb()) {
       try {
@@ -1087,19 +1253,23 @@ export const dbService = {
   },
 
   async saveSupportSettings(settings: SupportSettings): Promise<void> {
-    await firebaseBootPromise;
+    const engine = await waitForActiveBackendBoot();
     store.supportSettings = settings;
     setLocal('qf_supportSettings', settings);
-    if (sbOk()) { await sbSetSetting('supportSettings', settings); return; }
-    if (fbOk()) { try { await setDoc(doc(getDb()!, 'settings', 'supportSettings'), settings); } catch (e) { console.warn('[db] Firestore saveSupportSettings failed (local save ok):', e); } }
+    if (engine === 'supabase') { await sbSetSetting('supportSettings', settings); return; }
+    if (engine === 'firebase') {
+      requireFirebaseReady('save support settings');
+      await setDoc(doc(getDb()!, 'settings', 'supportSettings'), settings);
+      return;
+    }
   },
 
   // ── SMS SETTINGS ───────────────────────────────────────────────────────────
 
   async getSMSSettings(): Promise<SMSSettings> {
-    await firebaseBootPromise;
-    if (sbOk()) { const v = await sbGetSetting<SMSSettings>('smsSettings'); if (v) { setLocal('qf_smsSettings', v); return v; } }
-    if (fbOk()) { try { const snap = await getDoc(doc(getDb()!, 'settings', 'smsSettings')); if (snap.exists()) { const v = snap.data() as SMSSettings; setLocal('qf_smsSettings', v); return v; } } catch (err) { console.warn('[db] Firebase getSMS fallback:', err); } }
+    const engine = await waitForActiveBackendBoot();
+    if (engine === 'supabase') { const v = await sbGetSetting<SMSSettings>('smsSettings'); if (v) { setLocal('qf_smsSettings', v); return v; } }
+    if (fbOk()) { try { const snap = await getDoc(doc(getDb()!, 'settings', 'smsSettings')); if (snap.exists()) { const v = snap.data() as SMSSettings; setLocal('qf_smsSettings', v); return v; } } catch (err) { if (engine === 'firebase') throw err; console.warn('[db] Firebase getSMS fallback:', err); } }
     // Also try Firestore without auth check (permissive rules allow reads without auth)
     if (getActiveEngine() !== 'supabase' && getIsFirebaseConfigured() && !!getDb()) {
       try {
@@ -1115,18 +1285,22 @@ export const dbService = {
   },
 
   async saveSMSSettings(settings: SMSSettings): Promise<void> {
-    await firebaseBootPromise;
+    const engine = await waitForActiveBackendBoot();
     setLocal('qf_smsSettings', settings);
-    if (sbOk()) { await sbSetSetting('smsSettings', settings); return; }
-    if (fbOk()) { try { await setDoc(doc(getDb()!, 'settings', 'smsSettings'), settings); } catch (e) { console.warn('[db] Firestore saveSMSSettings failed (local save ok):', e); } }
+    if (engine === 'supabase') { await sbSetSetting('smsSettings', settings); return; }
+    if (engine === 'firebase') {
+      requireFirebaseReady('save SMS settings');
+      await setDoc(doc(getDb()!, 'settings', 'smsSettings'), settings);
+      return;
+    }
   },
 
   // ── EMAIL VERIFICATION SETTINGS ────────────────────────────────────────────
 
   async getEmailVerificationSettings(): Promise<EmailVerificationSettings> {
-    await firebaseBootPromise;
-    if (sbOk()) { const v = await sbGetSetting<EmailVerificationSettings>('emailVerification'); if (v) { setLocal('qf_emailVerification', v); return v; } }
-    if (fbOk()) { try { const snap = await getDoc(doc(getDb()!, 'settings', 'emailVerification')); if (snap.exists()) { const v = snap.data() as EmailVerificationSettings; setLocal('qf_emailVerification', v); return v; } } catch (err) { console.warn('[db] Firebase getEmailVerif fallback:', err); } }
+    const engine = await waitForActiveBackendBoot();
+    if (engine === 'supabase') { const v = await sbGetSetting<EmailVerificationSettings>('emailVerification'); if (v) { setLocal('qf_emailVerification', v); return v; } }
+    if (fbOk()) { try { const snap = await getDoc(doc(getDb()!, 'settings', 'emailVerification')); if (snap.exists()) { const v = snap.data() as EmailVerificationSettings; setLocal('qf_emailVerification', v); return v; } } catch (err) { if (engine === 'firebase') throw err; console.warn('[db] Firebase getEmailVerif fallback:', err); } }
     // Also try Firestore without auth check (permissive rules allow reads without auth)
     if (getActiveEngine() !== 'supabase' && getIsFirebaseConfigured() && !!getDb()) {
       try {
@@ -1142,10 +1316,14 @@ export const dbService = {
   },
 
   async saveEmailVerificationSettings(settings: EmailVerificationSettings): Promise<void> {
-    await firebaseBootPromise;
+    const engine = await waitForActiveBackendBoot();
     setLocal('qf_emailVerification', settings);
-    if (sbOk()) { await sbSetSetting('emailVerification', settings); return; }
-    if (fbOk()) { try { await setDoc(doc(getDb()!, 'settings', 'emailVerification'), settings); } catch (e) { console.warn('[db] Firestore saveEmailVerificationSettings failed (local save ok):', e); } }
+    if (engine === 'supabase') { await sbSetSetting('emailVerification', settings); return; }
+    if (engine === 'firebase') {
+      requireFirebaseReady('save email verification settings');
+      await setDoc(doc(getDb()!, 'settings', 'emailVerification'), settings);
+      return;
+    }
   },
 };
 
