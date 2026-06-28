@@ -702,14 +702,18 @@ export const dbService = {
 
   async deleteProduct(productId: string): Promise<void> {
     const engine = await waitForActiveBackendBoot();
-    store.products = store.products.filter(p => p.id !== productId);
-    setLocal('qf_products', store.products);
-    if (engine === 'supabase') { await sbDelete('products', productId); return; }
-    if (engine === 'firebase') {
+    // Cloud-first: persist the delete BEFORE updating local state so that if
+    // the cloud operation fails the local store is not silently corrupted.
+    // Previously local state was updated first, which caused the 'deleted'
+    // product to reappear on the next page refresh when Supabase re-fetched
+    // its still-existing rows and overwrote the stale localStorage cache.
+    if (engine === 'supabase') { await sbDelete('products', productId); }
+    else if (engine === 'firebase') {
       requireFirebaseReady('delete products');
       await deleteDoc(doc(getDb()!, 'products', productId));
-      return;
     }
+    store.products = store.products.filter(p => p.id !== productId);
+    setLocal('qf_products', store.products);
   },
 
   // ── CATEGORIES ─────────────────────────────────────────────────────────────
@@ -770,14 +774,13 @@ export const dbService = {
 
   async deleteCategory(categoryId: string): Promise<void> {
     const engine = await waitForActiveBackendBoot();
-    store.categories = store.categories.filter(c => c.id !== categoryId);
-    setLocal('qf_categories', store.categories);
-    if (engine === 'supabase') { await sbDelete('categories', categoryId); return; }
-    if (engine === 'firebase') {
+    if (engine === 'supabase') { await sbDelete('categories', categoryId); }
+    else if (engine === 'firebase') {
       requireFirebaseReady('delete categories');
       await deleteDoc(doc(getDb()!, 'categories', categoryId));
-      return;
     }
+    store.categories = store.categories.filter(c => c.id !== categoryId);
+    setLocal('qf_categories', store.categories);
   },
 
   // ── ORDERS ─────────────────────────────────────────────────────────────────
@@ -856,14 +859,13 @@ export const dbService = {
 
   async deleteOrder(orderId: string): Promise<void> {
     const engine = await waitForActiveBackendBoot();
-    store.orders = store.orders.filter(o => o.id !== orderId);
-    setLocal('qf_orders', store.orders);
-    if (engine === 'supabase') { await sbDelete('orders', orderId); return; }
-    if (engine === 'firebase') {
+    if (engine === 'supabase') { await sbDelete('orders', orderId); }
+    else if (engine === 'firebase') {
       requireFirebaseReady('delete orders');
       await deleteDoc(doc(getDb()!, 'orders', orderId));
-      return;
     }
+    store.orders = store.orders.filter(o => o.id !== orderId);
+    setLocal('qf_orders', store.orders);
   },
 
   // ── COUPONS ────────────────────────────────────────────────────────────────
@@ -913,15 +915,14 @@ export const dbService = {
   },
 
   async deleteCoupon(couponId: string): Promise<void> {
-    store.coupons = store.coupons.filter(c => c.id !== couponId);
-    setLocal('qf_coupons', store.coupons);
     const engine = await waitForActiveBackendBoot();
-    if (engine === 'supabase') { await sbDelete('coupons', couponId); return; }
-    if (engine === 'firebase') {
+    if (engine === 'supabase') { await sbDelete('coupons', couponId); }
+    else if (engine === 'firebase') {
       requireFirebaseReady('delete coupons');
       await deleteDoc(doc(getDb()!, 'coupons', couponId));
-      return;
     }
+    store.coupons = store.coupons.filter(c => c.id !== couponId);
+    setLocal('qf_coupons', store.coupons);
   },
 
   // ── NEWSLETTER ─────────────────────────────────────────────────────────────
@@ -979,14 +980,13 @@ export const dbService = {
 
   async deleteSubscriber(id: string): Promise<void> {
     const engine = await waitForActiveBackendBoot();
-    store.newsletter = store.newsletter.filter(s => s.id !== id);
-    setLocal('qf_newsletter', store.newsletter);
-    if (engine === 'supabase') { await sbDelete('newsletter', id); return; }
-    if (engine === 'firebase') {
+    if (engine === 'supabase') { await sbDelete('newsletter', id); }
+    else if (engine === 'firebase') {
       requireFirebaseReady('delete newsletter subscriber');
       await deleteDoc(doc(getDb()!, 'newsletter', id));
-      return;
     }
+    store.newsletter = store.newsletter.filter(s => s.id !== id);
+    setLocal('qf_newsletter', store.newsletter);
   },
 
   // ── REVIEWS ────────────────────────────────────────────────────────────────
@@ -1073,14 +1073,13 @@ export const dbService = {
 
   async deleteReview(reviewId: string): Promise<void> {
     const engine = await waitForActiveBackendBoot();
-    store.reviews = store.reviews.filter(r => r.id !== reviewId);
-    setLocal('qf_reviews', store.reviews);
-    if (engine === 'supabase') { await sbDelete('reviews', reviewId); return; }
-    if (engine === 'firebase') {
+    if (engine === 'supabase') { await sbDelete('reviews', reviewId); }
+    else if (engine === 'firebase') {
       requireFirebaseReady('delete reviews');
       await deleteDoc(doc(getDb()!, 'reviews', reviewId));
-      return;
     }
+    store.reviews = store.reviews.filter(r => r.id !== reviewId);
+    setLocal('qf_reviews', store.reviews);
   },
 
   // ── SITE SETTINGS ──────────────────────────────────────────────────────────

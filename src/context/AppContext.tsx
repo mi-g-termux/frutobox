@@ -989,19 +989,19 @@ const DEFAULT_ADMIN_ORDER_ALERT = `<!DOCTYPE html>
       // Tear down old listeners and attach new ones for the resolved engine
       await _mountListenersForEngine(result.activeEngine);
 
-      // ── AUTO-SEED: If Firebase is empty, upload default products/categories ──
-      // This handles the case where admin connects Firebase after initial local
-      // setup — the Firebase DB is blank so we seed it with defaults automatically.
-      if (result.success && result.activeEngine === 'firebase') {
+      // ── AUTO-SEED: If cloud backend is empty, upload default products/categories ──
+      // This handles the case where admin connects Firebase or Supabase after
+      // initial local setup — the cloud DB is blank so we seed it with defaults.
+      if (result.success && (result.activeEngine === 'firebase' || result.activeEngine === 'supabase')) {
         try {
           const [existingProducts, existingCategories] = await Promise.all([
             dbService.getProducts(),
             dbService.getCategories(),
           ]);
-          const firebaseIsEmpty =
+          const cloudIsEmpty =
             existingProducts.length === 0 && existingCategories.length === 0;
-          if (firebaseIsEmpty) {
-            console.log('[AppContext] Firebase is empty — seeding default store data...');
+          if (cloudIsEmpty) {
+            console.log(`[AppContext] ${result.activeEngine} is empty — seeding default store data...`);
             await seedDefaultData({
               products:   DEFAULT_PRODUCTS,
               categories: DEFAULT_CATEGORIES,
@@ -1011,7 +1011,7 @@ const DEFAULT_ADMIN_ORDER_ALERT = `<!DOCTYPE html>
             console.log('[AppContext] Default store data seeded successfully.');
           }
         } catch (seedErr) {
-          console.warn('[AppContext] Auto-seed to Firebase failed (non-fatal):', seedErr);
+          console.warn(`[AppContext] Auto-seed to ${result.activeEngine} failed (non-fatal):`, seedErr);
         }
       }
 
@@ -2010,6 +2010,9 @@ const DEFAULT_ADMIN_ORDER_ALERT = `<!DOCTYPE html>
   };
 
   const deleteProduct = async (productId: string) => {
+    // dbService.deleteProduct now executes the cloud delete FIRST and only
+    // updates local state after success — so if it throws, the local store
+    // is not corrupted and the product is not silently 'undeleted' on refresh.
     await dbService.deleteProduct(productId);
     setProducts(prev => prev.filter(p => p.id !== productId));
   };
