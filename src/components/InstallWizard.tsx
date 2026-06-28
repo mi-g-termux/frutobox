@@ -1231,7 +1231,12 @@ export default function InstallWizard() {
               <summary className="cursor-pointer font-semibold text-emerald-800">📋 Required SQL schema — click to expand</summary>
               <p className="mt-2 text-[11px] text-emerald-800 leading-relaxed">These policies allow your storefront to read public data and accept new orders/reviews. During installation, the admin key can seed products/categories/coupons. After installation, these are read-only for public users.</p>
               <div className="relative mt-2">
-              <pre className="bg-slate-900 text-emerald-300 text-[11px] font-mono p-3 rounded overflow-x-auto select-all">{`-- ── Core tables ───────────────────────────────────────────────────────────
+              <pre className="bg-slate-900 text-emerald-300 text-[11px] font-mono p-3 rounded overflow-x-auto select-all max-h-96 whitespace-pre-wrap">{`-- ═════════════════════════════════════════════════════════════════════════════
+-- FRUITOPIA — Full Supabase Schema + RLS + Realtime
+-- Paste this entire block into Supabase → SQL Editor, then click RUN.
+-- ═════════════════════════════════════════════════════════════════════════════
+
+-- ── Core tables ───────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS settings   (key TEXT PRIMARY KEY, value JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS products   (id TEXT PRIMARY KEY, data JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS orders     (id TEXT PRIMARY KEY, data JSONB NOT NULL);
@@ -1241,31 +1246,37 @@ CREATE TABLE IF NOT EXISTS newsletter (id TEXT PRIMARY KEY, data JSONB NOT NULL)
 CREATE TABLE IF NOT EXISTS reviews    (id TEXT PRIMARY KEY, data JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS users      (id TEXT PRIMARY KEY, data JSONB NOT NULL);
 
--- ── Section 3: Gallery + Variant tables ────────────────────────────────────
+-- ── Gallery + Variant tables ──────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS product_images         (id TEXT PRIMARY KEY, data JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS product_variant_groups (id TEXT PRIMARY KEY, data JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS product_variants       (id TEXT PRIMARY KEY, data JSONB NOT NULL);
 
--- ── Grants (anon = your storefront's public key) ────────────────────────────
--- anon needs INSERT + UPDATE on settings so the install wizard can save config:
-GRANT SELECT, INSERT, UPDATE ON settings   TO anon;
-GRANT ALL                    ON settings   TO service_role;
--- anon needs INSERT + UPDATE on products/categories so the wizard can seed demo data:
-GRANT SELECT, INSERT, UPDATE ON products   TO anon;
-GRANT ALL                    ON products   TO service_role;
-GRANT INSERT ON orders TO anon;
-GRANT ALL ON orders TO service_role;
-GRANT SELECT, INSERT, UPDATE ON coupons    TO anon;
-GRANT ALL                    ON coupons    TO service_role;
-GRANT SELECT, INSERT, UPDATE ON categories TO anon;
-GRANT ALL                    ON categories TO service_role;
-GRANT INSERT ON newsletter TO anon;
-GRANT ALL ON newsletter TO service_role;
-GRANT SELECT, INSERT ON reviews TO anon;
-GRANT ALL ON reviews TO service_role;
-GRANT SELECT, INSERT, UPDATE ON users      TO anon;
-GRANT ALL                    ON users      TO service_role;
--- Gallery + Variant tables: public reads, anon upserts (admin operations via anon key):
+-- ── Grants (anon = your storefront's public anon key) ──────────────────────
+-- Settings: install wizard + admin panel reads/writes config
+GRANT SELECT, INSERT, UPDATE, DELETE ON settings   TO anon;
+GRANT ALL                            ON settings   TO service_role;
+-- Products: admin seeds, edits, deletes; storefront reads
+GRANT SELECT, INSERT, UPDATE, DELETE ON products   TO anon;
+GRANT ALL                            ON products   TO service_role;
+-- Categories: admin seeds, edits, deletes; storefront reads
+GRANT SELECT, INSERT, UPDATE, DELETE ON categories TO anon;
+GRANT ALL                            ON categories TO service_role;
+-- Coupons: admin manages; storefront validates
+GRANT SELECT, INSERT, UPDATE, DELETE ON coupons    TO anon;
+GRANT ALL                            ON coupons    TO service_role;
+-- Orders: customers create; admin reads/updates/deletes
+GRANT SELECT, INSERT, UPDATE, DELETE ON orders     TO anon;
+GRANT ALL                            ON orders     TO service_role;
+-- Reviews: customers create; admin moderates/deletes
+GRANT SELECT, INSERT, UPDATE, DELETE ON reviews    TO anon;
+GRANT ALL                            ON reviews    TO service_role;
+-- Newsletter: customers subscribe; admin manages
+GRANT SELECT, INSERT, UPDATE, DELETE ON newsletter TO anon;
+GRANT ALL                            ON newsletter TO service_role;
+-- Users: customer accounts
+GRANT SELECT, INSERT, UPDATE, DELETE ON users      TO anon;
+GRANT ALL                            ON users      TO service_role;
+-- Gallery + Variant tables: full admin access via anon key
 GRANT SELECT, INSERT, UPDATE, DELETE ON product_images         TO anon;
 GRANT ALL                            ON product_images         TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON product_variant_groups TO anon;
@@ -1273,8 +1284,14 @@ GRANT ALL                            ON product_variant_groups TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON product_variants       TO anon;
 GRANT ALL                            ON product_variants       TO service_role;
 
--- ── Enable Realtime on settings ─────────────────────────────────────────────
-ALTER PUBLICATION supabase_realtime ADD TABLE settings;
+-- ── Enable Realtime on ALL tables (idempotent) ────────────────────────────
+DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE settings;   EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE products;   EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE categories; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE coupons;    EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE orders;     EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE reviews;    EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE newsletter; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- ── Enable RLS on every table ────────────────────────────────────────────────
 ALTER TABLE settings              ENABLE ROW LEVEL SECURITY;
@@ -1289,34 +1306,54 @@ ALTER TABLE product_images         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE product_variant_groups ENABLE ROW LEVEL SECURITY;
 ALTER TABLE product_variants       ENABLE ROW LEVEL SECURITY;
 
--- ── RLS Policies ─────────────────────────────────────────────────────────────
--- Public read access for storefront data:
-CREATE POLICY "public read settings"          ON settings              FOR SELECT USING (true);
-CREATE POLICY "public read products"          ON products              FOR SELECT USING (true);
-CREATE POLICY "public read categories"        ON categories            FOR SELECT USING (true);
-CREATE POLICY "public read reviews"           ON reviews               FOR SELECT USING (true);
-CREATE POLICY "public read coupons"           ON coupons               FOR SELECT USING (true);
-CREATE POLICY "public read product_images"    ON product_images         FOR SELECT USING (true);
-CREATE POLICY "public read variant_groups"    ON product_variant_groups FOR SELECT USING (true);
-CREATE POLICY "public read product_variants"  ON product_variants       FOR SELECT USING (true);
--- INSERT + UPDATE for installation/seeding (upsert needs both):
-CREATE POLICY "anon write settings"       ON settings   FOR INSERT WITH CHECK (true);
-CREATE POLICY "anon update settings"      ON settings   FOR UPDATE USING (true) WITH CHECK (true);
-CREATE POLICY "anon write products"       ON products   FOR INSERT WITH CHECK (true);
-CREATE POLICY "anon update products"      ON products   FOR UPDATE USING (true) WITH CHECK (true);
-CREATE POLICY "anon write categories"     ON categories FOR INSERT WITH CHECK (true);
-CREATE POLICY "anon update categories"    ON categories FOR UPDATE USING (true) WITH CHECK (true);
-CREATE POLICY "anon write coupons"        ON coupons    FOR INSERT WITH CHECK (true);
-CREATE POLICY "anon update coupons"       ON coupons    FOR UPDATE USING (true) WITH CHECK (true);
-CREATE POLICY "anon write pimages"        ON product_images         FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "anon write pvgroups"       ON product_variant_groups FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "anon write pvariants"      ON product_variants       FOR ALL USING (true) WITH CHECK (true);
--- Public creates only where customers submit data:
-CREATE POLICY "public create orders"     ON orders     FOR INSERT WITH CHECK (true);
-CREATE POLICY "public create reviews"    ON reviews    FOR INSERT WITH CHECK (true);
-CREATE POLICY "public update reviews"    ON reviews    FOR UPDATE USING (true) WITH CHECK (true);
-CREATE POLICY "public create newsletter" ON newsletter FOR INSERT WITH CHECK (true);
-CREATE POLICY "public write users"       ON users      FOR ALL USING (true) WITH CHECK (true);`}</pre>
+-- ── RLS Policies — permissive: allow anon full CRUD ─────────────────────────
+-- Drop old + new policies for idempotent re-runs (safe to run even if missing)
+DROP POLICY IF EXISTS "anon products all"       ON products;
+DROP POLICY IF EXISTS "anon categories all"     ON categories;
+DROP POLICY IF EXISTS "anon coupons all"        ON coupons;
+DROP POLICY IF EXISTS "anon settings all"       ON settings;
+DROP POLICY IF EXISTS "anon orders all"         ON orders;
+DROP POLICY IF EXISTS "anon reviews all"        ON reviews;
+DROP POLICY IF EXISTS "anon newsletter all"     ON newsletter;
+DROP POLICY IF EXISTS "anon users all"          ON users;
+DROP POLICY IF EXISTS "anon pimages all"        ON product_images;
+DROP POLICY IF EXISTS "anon pvgroups all"       ON product_variant_groups;
+DROP POLICY IF EXISTS "anon pvariants all"      ON product_variants;
+DROP POLICY IF EXISTS "public read settings"    ON settings;
+DROP POLICY IF EXISTS "anon write settings"     ON settings;
+DROP POLICY IF EXISTS "anon update settings"    ON settings;
+DROP POLICY IF EXISTS "public read products"    ON products;
+DROP POLICY IF EXISTS "anon write products"     ON products;
+DROP POLICY IF EXISTS "anon update products"    ON products;
+DROP POLICY IF EXISTS "public read categories"  ON categories;
+DROP POLICY IF EXISTS "anon write categories"   ON categories;
+DROP POLICY IF EXISTS "anon update categories"  ON categories;
+DROP POLICY IF EXISTS "public read reviews"     ON reviews;
+DROP POLICY IF EXISTS "anon write reviews"      ON reviews;
+DROP POLICY IF EXISTS "anon update reviews"     ON reviews;
+DROP POLICY IF EXISTS "public read coupons"     ON coupons;
+DROP POLICY IF EXISTS "anon write coupons"      ON coupons;
+DROP POLICY IF EXISTS "anon update coupons"     ON coupons;
+DROP POLICY IF EXISTS "anon write pimages"      ON product_images;
+DROP POLICY IF EXISTS "anon write pvgroups"     ON product_variant_groups;
+DROP POLICY IF EXISTS "anon write pvariants"    ON product_variants;
+DROP POLICY IF EXISTS "public create orders"    ON orders;
+DROP POLICY IF EXISTS "public create reviews"   ON reviews;
+DROP POLICY IF EXISTS "public update reviews"   ON reviews;
+DROP POLICY IF EXISTS "public create newsletter" ON newsletter;
+DROP POLICY IF EXISTS "public write users"      ON users;
+-- Create fresh policies
+CREATE POLICY "anon products all" ON products FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "anon categories all" ON categories FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "anon coupons all" ON coupons FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "anon settings all" ON settings FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "anon orders all" ON orders FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "anon reviews all" ON reviews FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "anon newsletter all" ON newsletter FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "anon users all" ON users FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "anon pimages all" ON product_images FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "anon pvgroups all" ON product_variant_groups FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "anon pvariants all" ON product_variants FOR ALL USING (true) WITH CHECK (true);`}</pre>
                 <button
                   type="button"
                   onClick={(e) => {

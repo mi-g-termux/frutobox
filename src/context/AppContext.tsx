@@ -547,14 +547,18 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
    * Called early in Firebase initialization (not gated by admin auth).
    */
   const _attachOrdersListener = () => {
-    if (!getIsFirebaseConfigured()) return;
-    const unsubOrders = subscribeOrders((list) => {
-      setOrders(list);
-      try { localStorage.setItem('qf_orders', JSON.stringify(list)); } catch {}
-      console.log('[AppContext] Orders real-time update received:', list.length, 'orders');
-    });
-    activeListenersRef.current.push(unsubOrders);
-    console.log('[AppContext] Orders listener attached (real-time sync enabled).');
+    // subscribeOrders is engine-agnostic (Firebase/Supabase) — no Firebase guard here
+    try {
+      const unsubOrders = subscribeOrders((list) => {
+        setOrders(list);
+        try { localStorage.setItem('qf_orders', JSON.stringify(list)); } catch {}
+        console.log('[AppContext] Orders real-time update received:', list.length, 'orders');
+      });
+      activeListenersRef.current.push(unsubOrders);
+      console.log('[AppContext] Orders listener attached (real-time sync enabled).');
+    } catch (err) {
+      console.warn('[AppContext] Orders listener setup failed:', err);
+    }
   };
 
   /** Ref used by C6 to attach auth-restricted listeners once Firebase Auth confirms */
@@ -785,6 +789,48 @@ const DEFAULT_ADMIN_ORDER_ALERT = `<!DOCTYPE html>
       }
     } else if (engine === 'supabase') {
       _attachSupabaseSettingsListener();
+      // Attach catalog listeners (subscribeProducts/subscribeCategories are engine-agnostic
+      // in db.ts — they use fbOk()/sbOk() internally to route to the correct backend)
+      try {
+        _attachFirebaseCatalogListeners();
+        // Skip settings doc listeners for Supabase — _attachSupabaseSettingsListener
+        // already handles paymentSettings, smtpSettings, adminSettings, supportSettings,
+        // smsSettings, and emailVerification via onSupabaseAnySettingChange.
+        if (engine !== 'supabase') {
+          _attachFirebaseSettingsDocListeners();
+        }
+
+        const unsubCoupons = subscribeCoupons((list) => {
+          setCoupons(list);
+          try { localStorage.setItem('qf_coupons', JSON.stringify(list)); } catch {}
+        });
+        activeListenersRef.current.push(unsubCoupons);
+
+        const unsubReviews = subscribeReviews((list) => {
+          setReviews(list);
+          try { localStorage.setItem('qf_reviews', JSON.stringify(list)); } catch {}
+        });
+        activeListenersRef.current.push(unsubReviews);
+
+        console.log('[AppContext] Supabase catalog + settings doc + coupons + reviews listeners attached.');
+      } catch (err) {
+        console.warn('[AppContext] Supabase catalog listener setup failed:', err);
+      }
+
+      // Orders listener (engine-agnostic)
+      _attachOrdersListener();
+
+      // Newsletter listener for Supabase (no Firebase Auth required)
+      try {
+        const unsubNewsletter = subscribeNewsletterSubscribers((list) => {
+          setNewsletterSubscribers(list);
+          try { localStorage.setItem('qf_newsletter', JSON.stringify(list)); } catch {}
+        });
+        activeListenersRef.current.push(unsubNewsletter);
+        console.log('[AppContext] Supabase newsletter listener attached.');
+      } catch (err) {
+        console.warn('[AppContext] Supabase newsletter listener failed:', err);
+      }
     }
     // 'local' engine: no real-time listeners needed; BroadcastChannel handles cross-tab sync
   };
