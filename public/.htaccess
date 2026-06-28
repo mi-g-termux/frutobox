@@ -1,0 +1,45 @@
+# ── Block direct access to any leftover Firebase/Supabase config files ───
+<Files "firebase-config.json">
+  Order Allow,Deny
+  Deny from all
+</Files>
+<FilesMatch "(.*-config\.json|\.env.*)$">
+  Order Allow,Deny
+  Deny from all
+</FilesMatch>
+
+Options -MultiViews
+RewriteEngine On
+
+# ── cPanel Node.js: proxy /api/* and /firebase-config.json → Node server ──
+# These rules assume your cPanel Node.js app runs on port 3005 (adjust if
+# different). Requires mod_proxy + mod_proxy_http to be enabled on the server.
+# If mod_proxy is not available, ask your host to enable it, or use the
+# cPanel "Node.js App" interface to set the application root to this directory
+# and let the Node server handle routing itself.
+
+<IfModule mod_proxy.c>
+  ProxyPreserveHost On
+
+  # Firebase config proxy
+  RewriteCond %{REQUEST_URI} ^/firebase-config\.json$
+  RewriteRule ^ http://127.0.0.1:3005/firebase-config.json [P,L]
+
+  # API install-status and save-config
+  RewriteCond %{REQUEST_URI} ^/api/install-status
+  RewriteRule ^ http://127.0.0.1:3005%{REQUEST_URI} [P,L]
+
+  # Payment gateway pretty URLs → Node server (all gateways)
+  RewriteCond %{REQUEST_URI} ^/api/(bkash|nagad|sslcommerz|razorpay|paypal|stripe|paytm|upi|jazzcash|easypaisa|payfast)/(.*)
+  RewriteRule ^ http://127.0.0.1:3005%{REQUEST_URI} [P,L]
+
+  # All remaining /api/* requests → Node server
+  RewriteCond %{REQUEST_URI} ^/api/
+  RewriteRule ^ http://127.0.0.1:3005%{REQUEST_URI} [P,L]
+</IfModule>
+
+# ── SPA fallback: send all non-file, non-dir requests to index.html ──────
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{REQUEST_URI} !^/api/
+RewriteRule ^ index.html [QSA,L]

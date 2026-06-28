@@ -1,0 +1,189 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn();
+    }
+
+    function isValidEmail(s) {
+      return s is string && s.size() <= 254 && s.matches('^[^@\s]+@[^@\s]+\.[^@\s]+$');
+    }
+
+    function isValidPhoneKey(s) {
+      return s is string && s.size() >= 8 && s.size() <= 20 && s.matches('^\+?[0-9]{8,20}$');
+    }
+
+    function notYetInstalled() {
+      return !exists(/databases/$(database)/documents/settings/install_status)
+          || get(/databases/$(database)/documents/settings/install_status).data.installed != true;
+    }
+
+    function validUserCreate(userId) {
+      return request.resource.data.id == userId
+          && isValidEmail(request.resource.data.email)
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.name.size() <= 100
+          && request.resource.data.phone is string
+          && request.resource.data.phoneKey is string
+          // Phone-number uniqueness is only enforced when this account is
+          // actually CLAIMING a phone number (phoneKey non-empty). Guest-
+          // checkout auto-created accounts (ensureUserAfterCheckout in
+          // AppContext.tsx) intentionally leave phoneKey empty — the phone
+          // is stored as a plain profile field but not claimed as unique,
+          // so the real owner of that number can still register and claim
+          // it separately later. Requiring every account to claim a unique,
+          // index-backed phone number at create time silently rejected
+          // every guest-checkout write, which fell back to a device-local
+          // -only account — the same email would then look like a brand
+          // new signup on any other device/browser, producing what looked
+          // like a duplicate account.
+          && (
+                request.resource.data.phoneKey == ''
+                || (
+                      isValidPhoneKey(request.resource.data.phoneKey)
+                      && existsAfter(/databases/$(database)/documents/userPhones/$(request.resource.data.phoneKey))
+                      && getAfter(/databases/$(database)/documents/userPhones/$(request.resource.data.phoneKey)).data.userId == userId
+                      && !exists(/databases/$(database)/documents/userPhones/$(request.resource.data.phoneKey))
+                   )
+             )
+          && request.resource.data.address is string
+          && request.resource.data.address.size() <= 500
+          && request.resource.data.city is string
+          && request.resource.data.city.size() <= 100
+          && request.resource.data.passwordHash is string
+          // NOTE: empty string is intentionally allowed here too. The same
+          // guest-checkout accounts above are created with passwordHash: ''
+          // and email the customer a code to set a password later via
+          // "Forgot password". The account-vs-passwordless-account
+          // distinction is enforced at the application layer (login
+          // requires a non-empty hash to succeed), not at the database
+          // layer.
+          && request.resource.data.passwordHash.size() <= 128;
+    }
+
+    match /settings/install_status {
+      allow read:   if true;
+      allow create: if true;
+      allow update, delete: if isAdmin()
+        || (resource.data.installed == false);
+    }
+
+    match /settings/{docId} {
+      allow read:  if true;
+      allow write: if notYetInstalled() || isAdmin();
+    }
+
+    match /products/{id} {
+      allow read:  if true;
+      allow write: if notYetInstalled() || isAdmin();
+
+      // Gallery images subcollection
+      match /images/{imageId} {
+        allow read:  if true;
+        allow write: if notYetInstalled() || isAdmin();
+      }
+
+      // Variant groups subcollection
+      match /variantGroups/{groupId} {
+        allow read:  if true;
+        allow write: if notYetInstalled() || isAdmin();
+      }
+
+      // Variants subcollection
+      match /variants/{variantId} {
+        allow read:  if true;
+        allow write: if notYetInstalled() || isAdmin();
+      }
+    }
+
+    // Top-level collections for variant/gallery data (Supabase-style flat layout)
+    match /product_images/{id} {
+      allow read:  if true;
+      allow write: if notYetInstalled() || isAdmin();
+    }
+
+    match /product_variant_groups/{id} {
+      allow read:  if true;
+      allow write: if notYetInstalled() || isAdmin();
+    }
+
+    match /product_variants/{id} {
+      allow read:  if true;
+      allow write: if notYetInstalled() || isAdmin();
+    }
+
+    match /categories/{id} {
+      allow read:  if true;
+      allow write: if notYetInstalled() || isAdmin();
+    }
+
+    match /coupons/{id} {
+      allow read:  if true;
+      allow write: if notYetInstalled() || isAdmin();
+    }
+
+    match /reviews/{id} {
+      allow read: if true;
+      allow create: if notYetInstalled()
+                    || (request.resource.data.rating is int
+                        && request.resource.data.rating >= 1
+                        && request.resource.data.rating <= 5
+                        && request.resource.data.comment is string
+                        && request.resource.data.comment.size() > 0
+                        && request.resource.data.comment.size() <= 2000
+                        && request.resource.data.customerName is string
+                        && request.resource.data.customerName.size() > 0
+                        && request.resource.data.customerName.size() <= 100);
+      allow update, delete: if isAdmin();
+    }
+
+    match /orders/{id} {
+      allow get, list: if true;
+      allow create: if request.resource.data.customerName is string
+                    && request.resource.data.customerName.size() > 0
+                    && request.resource.data.customerName.size() <= 100
+                    && request.resource.data.total is number
+                    && request.resource.data.total >= 0
+                    && request.resource.data.total <= 1000000
+                    && request.resource.data.items is list
+                    && request.resource.data.items.size() > 0
+                    && request.resource.data.items.size() <= 200
+                    && (!('email' in request.resource.data)
+                        || isValidEmail(request.resource.data.email))
+                    && (!('status' in request.resource.data)
+                        || request.resource.data.status == 'pending');
+      allow update, delete: if isAdmin();
+    }
+
+    match /newsletter/{id} {
+      allow create: if isValidEmail(request.resource.data.email)
+                    && request.resource.data.keys().hasOnly(['email','createdAt']);
+      allow read, update, delete: if isAdmin();
+    }
+
+    match /userPhones/{phoneId} {
+      allow read: if false;
+      allow create: if request.resource.data.phoneKey == phoneId
+                    && isValidPhoneKey(phoneId)
+                    && request.resource.data.userId is string
+                    && request.resource.data.email is string
+                    && !exists(/databases/$(database)/documents/userPhones/$(phoneId));
+      allow update, delete: if isAdmin();
+    }
+
+    match /users/{userId} {
+      allow list: if true;
+      allow get: if true;
+      allow create: if validUserCreate(userId) || isAdmin();
+      allow update, delete: if isAdmin()
+        || (isSignedIn() && request.auth.uid == userId);
+    }
+
+  }
+}

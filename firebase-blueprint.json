@@ -1,0 +1,143 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "An ecommerce storefront item or custom dynamic menu item.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique product identification alphanumeric ID." },
+        "name": { "type": "string", "description": "Display name of the product." },
+        "description": { "type": "string", "description": "Ingredient profile and copy text." },
+        "price": { "type": "number", "description": "Default list price of this item." },
+        "salePrice": { "type": "number", "description": "Active promotional discounted price." },
+        "stock": { "type": "number", "description": "Active inventory quantity left." },
+        "image": { "type": "string", "description": "Vibrant visual representation emoji or asset URL." },
+        "category": { "type": "string", "description": "Category name mapping." },
+        "rating": { "type": "number", "description": "Weighted average review rating." },
+        "reviewsCount": { "type": "number", "description": "Number of total approved reviews." },
+        "isFeatured": { "type": "boolean", "description": "High-priority showcase tag status." },
+        "isActive": { "type": "boolean", "description": "Flag determining active public visibility." }
+      },
+      "required": ["id", "name", "price", "stock", "image", "category"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "An individual completed shopping cart delivery transaction record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orderNumber": { "type": "string" },
+        "customerName": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "city": { "type": "string" },
+        "postalCode": { "type": "string" },
+        "deliveryNote": { "type": "string" },
+        "items": { "type": "array" },
+        "subtotal": { "type": "number" },
+        "deliveryFee": { "type": "number" },
+        "couponApplied": { "type": "string" },
+        "discount": { "type": "number" },
+        "total": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "paymentStatus": { "type": "string" },
+        "orderStatus": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "orderNumber", "customerName", "email", "phone", "address", "city", "items", "subtotal", "total", "paymentMethod", "paymentStatus", "orderStatus", "createdAt"]
+    },
+    "Coupon": {
+      "title": "Coupon",
+      "description": "Active promo-code system entries offering rate discounts.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "code": { "type": "string" },
+        "discountPercentage": { "type": "number" },
+        "expiryDate": { "type": "string" },
+        "usageLimit": { "type": "number" },
+        "usedCount": { "type": "number" }
+      },
+      "required": ["id", "code", "discountPercentage", "expiryDate", "usageLimit"]
+    },
+    "NewsletterSubscriber": {
+      "title": "NewsletterSubscriber",
+      "description": "Customer email addresses enrolled into promotional marketing lists.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "subscribedAt": { "type": "string" }
+      },
+      "required": ["id", "email", "subscribedAt"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "Public feedback and rating score for catalog products.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "productId": { "type": "string" },
+        "reviewerName": { "type": "string" },
+        "rating": { "type": "number" },
+        "comment": { "type": "string" },
+        "isApproved": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "productId", "reviewerName", "rating", "comment", "isApproved", "createdAt"]
+    },
+    "SiteSettings": {
+      "title": "SiteSettings",
+      "description": "Global custom website texts, color profiles, contact fields, and logos.",
+      "type": "object",
+      "properties": {
+        "websiteName": { "type": "string" },
+        "logoEmoji": { "type": "string" },
+        "heroBadge": { "type": "string" },
+        "heroTitleLine1": { "type": "string" },
+        "heroTitleLine2": { "type": "string" },
+        "heroSubtitle": { "type": "string" },
+        "heroButtonText": { "type": "string" },
+        "heroTimeBadge": { "type": "string" },
+        "footerText": { "type": "string" },
+        "contactPhone": { "type": "string" },
+        "contactEmail": { "type": "string" },
+        "contactAddress": { "type": "string" },
+        "promoBannerEnabled": { "type": "boolean" },
+        "promoBannerText": { "type": "string" },
+        "themePrimaryColor": { "type": "string" },
+        "themeBgColor": { "type": "string" },
+        "themeHeaderFont": { "type": "string" },
+        "trademarkText": { "type": "string" }
+      },
+      "required": ["websiteName", "logoEmoji", "themePrimaryColor", "themeBgColor"]
+    }
+  },
+  "firestore": {
+    "products/{productId}": {
+      "schema": "Product",
+      "description": "Individual documents for store products."
+    },
+    "orders/{orderId}": {
+      "schema": "Order",
+      "description": "Contains completed customer transactions and delivery states."
+    },
+    "coupons/{couponId}": {
+      "schema": "Coupon",
+      "description": "Promotional discounts validating rates dynamically at checkout."
+    },
+    "newsletter/{subscriberId}": {
+      "schema": "NewsletterSubscriber",
+      "description": "Dynamic promotional mail enrollment subscriptions list."
+    },
+    "reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "User feedback listings linked to active catalog listings."
+    },
+    "settings/{settingsDocId}": {
+      "schema": "SiteSettings",
+      "description": "Single-document configurations for branding, payments, support, credentials, and SMTP logs."
+    }
+  }
+}

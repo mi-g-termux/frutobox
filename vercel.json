@@ -1,0 +1,40 @@
+{
+  "buildCommand": "vite build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/firebase-config.json", "destination": "/api/firebase-config" },
+    { "source": "/supabase-config.json", "destination": "/api/supabase-config" },
+
+    { "source": "/api/bkash/:action",      "destination": "/api/payment?gateway=bkash&action=:action" },
+    { "source": "/api/nagad/:action",      "destination": "/api/payment?gateway=nagad&action=:action" },
+    { "source": "/api/sslcommerz/:action", "destination": "/api/payment?gateway=sslcommerz&action=:action" },
+    { "source": "/api/razorpay/:action",   "destination": "/api/payment?gateway=razorpay&action=:action" },
+    { "source": "/api/paypal/:action",     "destination": "/api/payment?gateway=paypal&action=:action" },
+    { "source": "/api/stripe/:action",     "destination": "/api/payment?gateway=stripe&action=:action" },
+
+    { "source": "/api/paytm/:action",      "destination": "/api/payment?gateway=paytm&action=:action" },
+    { "source": "/api/upi/:action",        "destination": "/api/payment?gateway=upi&action=:action" },
+    { "source": "/api/jazzcash/:action",   "destination": "/api/payment?gateway=jazzcash&action=:action" },
+    { "source": "/api/easypaisa/:action",  "destination": "/api/payment?gateway=easypaisa&action=:action" },
+    { "source": "/api/payfast/:action",    "destination": "/api/payment?gateway=payfast&action=:action" },
+
+    { "source": "/api/(.*)", "destination": "/api/$1" },
+
+    { "source": "/((?!api/|.*\\..+$).*)", "destination": "/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options",        "value": "DENY" }
+      ]
+    }
+  ]
+}

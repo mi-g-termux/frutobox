@@ -1,0 +1,51 @@
+{
+  "name": "fruitopia",
+  "private": true,
+  "version": "1.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "tsx server.ts",
+    "build:frontend": "vite build && node scripts/post-build.js",
+    "build:server": "node scripts/build-server.js",
+    "build": "npm run build:frontend && npm run build:server",
+    "build:render": "vite build && node scripts/post-build.js render  && npm run build:server",
+    "build:vercel": "vite build && node scripts/post-build.js vercel",
+    "build:cpanel": "vite build && node scripts/post-build.js cpanel  && npm run build:server",
+    "build:netlify": "vite build && node scripts/post-build.js",
+    "build:vps": "vite build && node scripts/post-build.js vps     && npm run build:server",
+    "start": "NODE_ENV=production node dist-server/server.js",
+    "start:dev": "tsx server.ts",
+    "clean": "rm -rf dist dist-server",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.0",
+    "@tailwindcss/vite": "^4.1.14",
+    "@vitejs/plugin-react": "^5.0.4",
+    "dotenv": "^17.2.3",
+    "express": "^4.21.2",
+    "firebase": "^12.13.0",
+    "firebase-admin": "^12.0.0",
+    "jspdf": "^2.5.2",
+    "lucide-react": "^0.546.0",
+    "nodemailer": "^6.9.13",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "tsx": "^4.19.2",
+    "vite": "^6.2.3"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.14.0",
+    "@types/nodemailer": "^8.0.0",
+    "@vercel/node": "^3.2.0",
+    "autoprefixer": "^10.4.21",
+    "esbuild": "^0.25.0",
+    "tailwindcss": "^4.1.14",
+    "typescript": "~5.8.2",
+    "vitest": "^4.1.9"
+  }
+}

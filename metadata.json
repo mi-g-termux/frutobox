@@ -1,0 +1,9 @@
+{
+  "name": "Quirky Fruity Ecommerce",
+  "description": "A highly polished, dynamic, CMS-driven full-stack ecommerce website based on the quirky-fruity aesthetic, featuring full admin controls, order tracking, coupons, real-time Firestore database integration, dynamic styling, and custom invoice views.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

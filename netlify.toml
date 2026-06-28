@@ -1,0 +1,58 @@
+# Netlify deploy config for Fruitopia
+#
+# Netlify only serves static files. All /api/* calls are proxied to your
+# Node server (Render, VPS, or cPanel Node.js app).
+#
+# REQUIRED: Set NODE_API_URL in Netlify dashboard:
+#   Site Settings → Environment Variables → Add variable
+#   KEY:   NODE_API_URL
+#   VALUE: https://YOUR-APP.onrender.com   (or your VPS/cPanel URL)
+#
+# Then redeploy. Without this, payments/email/SMS will not work.
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# Proxy /api/* to your backend Node server.
+# Uses NODE_API_URL env var - set it in Netlify dashboard.
+[[redirects]]
+  from = "/api/*"
+  to   = ":NODE_API_URL/api/:splat"
+  status = 200
+  force = true
+
+# Firebase config proxy
+[[redirects]]
+  from = "/firebase-config.json"
+  to   = ":NODE_API_URL/firebase-config.json"
+  status = 200
+  force = true
+
+# Supabase config proxy
+[[redirects]]
+  from = "/supabase-config.json"
+  to   = ":NODE_API_URL/supabase-config.json"
+  status = 200
+  force = true
+
+# SPA fallback - must be last
+[[redirects]]
+  from = "/*"
+  to   = "/index.html"
+  status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
